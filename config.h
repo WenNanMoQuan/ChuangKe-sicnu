@@ -72,16 +72,46 @@
 #define SD_MISO_PIN   7
 #define SD_CS_PIN     2
 
-/* ===================== 9. WiFi / 网络参数 ===================== */
-#define WIFI_SSID          "YOUR_SSID"        // 设备上线前替换为实际 WiFi
+/* ===================== 9. WiFi / 网络参数（可选「开发遥测」，完全离线运行也可） ===================== */
+/* ⚠️ 离线闭环约束（阶段八收口）：设备脱离网络，所有运行与处理都在单片机上形成闭环，
+   不依赖任何云端/外网。识别主路径 = 端侧 TFLite Micro；安全底线 = HC-SR04 超声波。
+   - ENABLE_WIFI_TELEMETRY=0（默认）：WiFi/HTTP/云端整套编译排除，纯离线运行（省 Flash/电费）。
+   - ENABLE_WIFI_TELEMETRY=1：仅作为「开发期遥测/调试」把识别结果异步发云端归档，
+     不参与任何引导决策，断网也不影响运行；云端不再是兜底，仅可选旁路。
+   08_云端识别服务 已降级为「可选开发遥测」（见 08 README），非运行时依赖。 */
+#define ENABLE_WIFI_TELEMETRY  0    // ★ 量产/实际佩戴务必保持 0（纯离线闭环）
+#define WIFI_SSID          "YOUR_SSID"        // 仅 ENABLE_WIFI_TELEMETRY=1 时生效（可留空）
 #define WIFI_PASSWORD      "YOUR_PASSWORD"
 #define CLOUD_API_URL      "http://YOUR_SERVER_IP:5000/api/recognize"
-/* 端到端延迟验收 ≤3s：单次请求超时 3s，最多重试 1 次（最坏 ≈3s+开销）。
-   说明：规划文档原写“5s/重试3次”，但其最坏 15s 与“≤3s 延迟”验收指标冲突，
-   此处按“实际运行优化”改为 3s/重试1次，确保满足验收且仍保留一次容错。 */
+/* 遥测 HTTP 参数（仅 ENABLE_WIFI_TELEMETRY=1 生效）：异步、非阻塞、失败即丢弃，不影响引导 */
 #define HTTP_TIMEOUT_MS    3000
 #define HTTP_MAX_RETRY     1
-#define WIFI_RECONNECT_MS  15000             // 离线时非阻塞重连尝试间隔（避免每帧阻塞）
+#define WIFI_RECONNECT_MS  15000             // 离线时非阻塞重连尝试间隔
+
+/* ===================== 9b. 端侧 AI 识别（YOLO-nano / TFLite Micro）—— 唯一识别主路径 ===================== */
+/* ⚠️ 模型权重需你自行训练/转换（见 11_端侧AI识别/model_tools/）。本机无 GPU/无外网，无法代训。
+   无模型时系统自动优雅回退：仅走 HC-SR04 超声波安全底线（纯离线，无需任何云端），
+   保证现在就能烧录运行；转好模型放进 TF 卡即自动启用端侧 AI，无需改代码。 */
+#define MODEL_PATH_SD      "/model/detect.tflite"  // TF 卡上的量化检测模型（放 /model/ 目录）
+#define MODEL_MAX_BYTES    (400 * 1024)  // 模型文件上限（量化 YOLO-nano 实测 <300KB）
+#define LOCAL_DETECT_W     96     // 检测输入张量宽（建议 96/160，越小越快；盲道/斑马线/井盖够用）
+#define LOCAL_DETECT_H     96     // 检测输入张量高
+/* 类别顺序必须与训练/转换时一致（见 model_tools/README）：0=盲道 1=斑马线 2=井盖 3=障碍 4=其他/背景 */
+#define CLASS_COUNT        5
+#define CLASS_BLINDPATH    0
+#define CLASS_ZEBRA        1
+#define CLASS_MANHOLE      2
+#define CLASS_OBSTACLE     3
+#define CLASS_OTHER        4
+#define DET_CONF_THRESH    0.45f  // 端侧检测置信度阈值（低于则视为“未识别”，由超声波兜底补位）
+#define DET_NMS_THRESH     0.45f  // 非极大值抑制 IoU 阈值
+#define LOCAL_INFER_INTERVAL_MS 600  // 端侧推理间隔（≈1.6 FPS @96×96；降帧可提帧率）
+/* TFLite Micro tensor arena：N8R8 + 量化 YOLO-nano(96×96,5类) 实测 <300KB；512KB 留余量 */
+#define TFLM_TENSOR_ARENA   (512 * 1024)
+/* 焦距系数（像素）：用于由检测框高度估算障碍距离。需按你的镜头标定，
+   公式 dist(m)= FOCAL_PX * OBSTACLE_REAL_H_M / box_h_px，OV2640@96 约 110~150。 */
+#define OBSTACLE_FOCAL_PX   130.0f
+#define OBSTACLE_REAL_H_M   0.8f   // 典型障碍(人/柱)真实高度(米)，用于距离估算
 
 /* ===================== 10. 采集与运行参数 ===================== */
 #define CAPTURE_FPS        1                  // 抽帧率：1 帧/秒
@@ -104,13 +134,16 @@
 /* ===================== 12. 离线兜底阈值 ===================== */
 #define ULTRA_FALLBACK_CM  50                 // 超声波 <50cm 触发强震/蜂鸣
 
-/* ===================== 12b. 天气模式（雨天/湿滑路面预警，设计 GAP 已闭环） ===================== */
+/* ===================== 12b. 天气模式（雨天/湿滑路面预警，物理按钮本地切换） ===================== */
 /* 雨天/湿滑路面制动距离变长，障碍预警阈值整体 +1m 更保守（实现见 obstacle_warning.cpp risk_of）。
-   编译期默认关闭；运行时可调用 set_weather_mode(true) 开启（建议由云端按天气下发，
-   或接一个物理拨动开关/按键）。开启后：
-     - 在线：障碍“距离->风险”用湿滑档（<1.5m LV3 / <3m LV2 / <4m LV1）
-     - 离线：超声波触发阈值由 50cm 放宽到 80cm（更早发现前方障碍） */
+   设备完全离线、不能靠云端下发天气，故运行时由【物理按钮】本地切换（详见 main.cpp read_weather_button）：
+     - 单击拨动开关/按键翻转湿滑档；
+     - 开启后：障碍“距离->风险”用湿滑档（<1.5m LV3 / <3m LV2 / <4m LV1），
+       同时超声波触发阈值由 50cm 放宽到 80cm（更早发现前方障碍）。
+   默认关闭（干燥正常档）。WEATHER_BTN_PIN 接一个带下拉/上拉的 GPIO 按钮/拨动开关。 */
 #define WEATHER_MODE_DEFAULT  false
+#define WEATHER_BTN_PIN      33    // 天气模式切换按钮（物理，离线可用；BOOT 33 内置上拉）
+#define WEATHER_BTN_DEBOUNCE_MS 300  // 按钮去抖窗口
 
 /* ===================== 13. 看门狗 ===================== */
 #define WDT_TIMEOUT_MS     30000              // 硬件看门狗 30s

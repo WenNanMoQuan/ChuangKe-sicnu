@@ -35,7 +35,7 @@ enum RiskLevel {
     RISK_LV3  = 3         // 0~1 米 近距离
 };
 
-/* ---------- 天气条件（云端下发，驱动天气模式自动切换） ---------- */
+/* ---------- 天气条件（离线闭环：运行时恒为 WX_UNKNOWN，湿滑档由物理按钮本地切换） ---------- */
 enum WeatherCond {
     WX_CLEAR   = 0,   // 晴/多云（干燥，正常档）
     WX_RAIN    = 1,   // 雨（湿滑，更保守档）
@@ -47,6 +47,13 @@ enum WeatherCond {
 static inline bool weather_is_wet(WeatherCond w) {
     return w == WX_RAIN || w == WX_SNOW || w == WX_FOG;
 }
+
+/* ---------- 识别来源（离线闭环：端侧主 + 超声波安全底线） ---------- */
+enum RunSource {
+    SRC_LOCAL   = 0,   // 端侧 TFLite Micro 检测（唯一识别主路径，全程离线）
+    SRC_CLOUD   = 1,   // 【保留未用】离线闭环架构下云端不参与引导，仅可选开发遥测
+    SRC_ULTRA   = 2,   // 无模型/识别失败时的 HC-SR04 超声波安全底线（SRC_LOCAL 的兜底）
+};
 
 /* ---------- 云端返回的反馈指令 ---------- */
 struct FeedbackCmd {
@@ -74,7 +81,14 @@ struct RecognizeResult {
     Obstacle  obstacles[4];         // 最多 4 个
     uint8_t   obstacle_cnt= 0;
     FeedbackCmd feedback;
-    WeatherCond weather = WX_UNKNOWN; // 云端下发的天气（驱动天气模式自动切换）
+    WeatherCond weather = WX_UNKNOWN; // 【离线闭环】天气不由云端下发，运行时恒为 WX_UNKNOWN；
+                                       // 雨天/湿滑档由物理按钮本地切换（见 set_weather_mode）
+    RunSource    source  = SRC_LOCAL; // 本次结果来源（端侧/云端/离线超声波）
+    float        det_conf= 0.0f;      // 端侧最高置信度（用于“低置信兜底”判定）
+    // 端侧检测扩展（混合架构新增字段）
+    bool        zebra_detected  = false; // 斑马线
+    bool        manhole_detected= false; // 井盖
+    float       blindpath_conf  = 0.0f;  // 盲道检测置信度
 };
 
 /* ---------- JSON KEY 常量（避免拼写错误） ---------- */
@@ -99,6 +113,6 @@ struct RecognizeResult {
 #define K_LED_COLOR      "led_color"
 #define K_VOICE          "voice_text"
 #define K_DEGRADED       "degraded"
-#define K_WEATHER        "weather"          // 云端下发天气: "clear"/"rain"/"snow"/"fog"
+#define K_WEATHER        "weather"          // 仅可选开发遥测字段: "clear"/"rain"/"snow"/"fog"
 
 #endif /* PROTOCOL_H */

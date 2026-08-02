@@ -1,7 +1,7 @@
 /**
  * @file    camera_capture.cpp
- * @brief   OV2640 采集实现
- * @stage   阶段三
+ * @brief   OV2640 采集实现（双模式：RGB565 检测 / JPEG 云端）
+ * @stage   阶段三 / 阶段八
  */
 #include "camera_capture.h"
 #include <esp_camera.h>
@@ -33,12 +33,12 @@ static camera_config_t camera_cfg = {
     .xclk_freq_hz = 20000000,
     .ledc_timer   = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
-    .pixel_format = PIXFORMAT_JPEG,
-    .frame_size   = FRAMESIZE_QVGA,   // 320x240
+    .pixel_format = PIXFORMAT_RGB565,       // 默认 RGB565（端侧 AI 直接喂）
+    .frame_size   = FRAMESIZE_QVGA,         // 320x240，端侧 AI 按需下采样到检测张量
     .jpeg_quality = JPEG_QUALITY,
     .fb_count     = 2,
     .grab_mode    = CAMERA_GRAB_WHEN_EMPTY,
-    .fb_location  = CAMERA_FB_IN_PSRAM,   // 帧缓冲放入 8MB PSRAM（充分利用板载 PSRAM）
+    .fb_location  = CAMERA_FB_IN_PSRAM,     // 帧缓冲放入 8MB PSRAM（充分利用板载 PSRAM）
 };
 
 bool camera_init() {
@@ -52,22 +52,38 @@ bool camera_init() {
         s->set_vflip(s, 1);      // 摄像头朝下安装，需垂直翻转
         s->set_hmirror(s, 1);
     }
-    Serial.println("[CAM] init OK");
+    Serial.println("[CAM] init OK (RGB565 detect mode)");
     return true;
 }
 
-bool camera_capture_base64(int quality, String &out) {
-    sensor_t *s = esp_camera_sensor_get();
-    if (s) s->set_quality(s, quality);   // 动态压缩质量（阶段六）
-
+bool camera_capture_rgb565(uint8_t *out, size_t &w, size_t &h) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         Serial.println("[CAM] frame buffer get failed");
         return false;
     }
+    w = fb->width; h = fb->height;
+    if (out) memcpy(out, fb->buf, fb->len);   // RGB565：len = w*h*2
+    esp_camera_fb_return(fb);
+    return true;
+}
+
+bool camera_capture_base64(int quality, String &out) {
+    // 临时把像素格式切到 JPEG（云端兜底用），用完不强制切回（下一次 RGB565 调用会重设）。
+    sensor_t *s = esp_camera_sensor_get();
+    if (s) { s->set_pixformat(s, PIXFORMAT_JPEG); s->set_quality(s, quality); }
+
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+        Serial.println("[CAM] jpeg frame get failed");
+        return false;
+    }
     // JPEG 已硬件编码，直接 Base64（内置实现，无外部库依赖）
     out = base64_encode(fb->buf, fb->len);
     esp_camera_fb_return(fb);
+
+    // 切回检测模式 RGB565，保证端侧 AI 下一帧拿到正确格式
+    if (s) s->set_pixformat(s, PIXFORMAT_RGB565);
     return true;
 }
 

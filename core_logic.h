@@ -35,7 +35,7 @@ FeedbackCmd schedule_feedback(const FeedbackCmd &path_fb, const FeedbackCmd &obs
 /* =================== 2b. 天气模式（雨天/湿滑预警，设计 GAP 闭环） =================== */
 /** @brief 当前天气模式：true=湿滑更保守档（阈值整体 +1m），false=正常档 */
 extern bool g_weather_mode;
-/** @brief 运行时切换天气模式（云端下发天气 / 物理开关调用） */
+/** @brief 运行时切换天气模式（离线闭环：由物理按钮 read_weather_button 调用） */
 void  set_weather_mode(bool on);
 /** @brief 读取当前天气模式 */
 bool  get_weather_mode();

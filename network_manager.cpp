@@ -85,7 +85,7 @@ bool cloud_recognize(const String &image_base64, float ultra_cm,
     }
     result.degraded = resp[K_DEGRADED] | false;
 
-    // —— 天气字段（云端下发，驱动天气模式自动切换；见 main.cpp）——
+    // —— 天气字段（仅可选开发遥测归档用；离线闭环中天气由物理按钮本地切换，不在此设置）——
     const char *wx = resp[K_WEATHER] | "clear";
     if      (!strcmp(wx, "rain"))  result.weather = WX_RAIN;
     else if (!strcmp(wx, "snow"))  result.weather = WX_SNOW;
