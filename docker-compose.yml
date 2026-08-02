@@ -1,0 +1,18 @@
+# 盲道识别云端服务 —— Docker Compose 一键部署
+# 用法：
+#   docker compose up --build -d      # 构建并后台启动
+#   docker compose logs -f            # 看日志
+#   docker compose down               # 停止
+# 环境变量可放到同目录 .env 文件（见 .env.example）
+services:
+  blindguide-cloud:
+    build: .
+    image: blindguide-cloud:latest
+    container_name: blindguide-cloud
+    ports:
+      - "${CLOUD_PORT:-5000}:5000"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    restart: unless-stopped
